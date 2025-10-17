@@ -38,6 +38,7 @@
     <div class="controls">
       <div id="mqttStatus" class="status small">MQTT: &#8230;</div>
       <div id="tfStatus" class="status small">TF: &#8230;</div>
+      <div id="espStatus" class="status small">ESP: &#8230;</div>
       <button id="btnPubPerro">Publicar perro</button>
       <button id="btnPubGato">Publicar gato</button>
       <button id="btnPubTest">Publicar test</button>
@@ -49,7 +50,7 @@
     </details>
   </main>
 
-  <footer>Prueba: WSS broker test.mosquitto.org:8081 | Topic comedero/door</footer>
+  <footer>Prueba: WSS broker test.mosquitto.org:8081 | Topics comedero/door y comedero/status</footer>
 
   <!-- Librerías -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
@@ -57,13 +58,14 @@
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
   <script>
-  // Configuración
+  // ================= CONFIGURACIÓN =================
   const THRESHOLD = 0.55;
   const COOLDOWN_MS = 3000;
   const MQTT_URL = 'wss://test.mosquitto.org:8081/mqtt';
   const TOPIC = 'comedero/door';
+  const STATUS_TOPIC = 'comedero/status';
 
-  // DOM
+  // ================= ELEMENTOS DOM =================
   const video = document.getElementById('video');
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
@@ -72,20 +74,20 @@
   const badge = document.getElementById('badge');
   const mqttStatus = document.getElementById('mqttStatus');
   const tfStatus = document.getElementById('tfStatus');
+  const espStatus = document.getElementById('espStatus');
 
-  // Log interno con límite
+  // ================= LOG =================
   const logs = [];
   function log(s){
     const ts = new Date().toLocaleTimeString();
     logs.unshift(ts + ' | ' + s);
     while(logs.length > 200) logs.pop();
     logEl.textContent = logs.join('\n');
-    // actualizar estado corto
     if (s.startsWith('✅ MQTT')) mqttStatus.textContent = 'MQTT: conectado';
     if (s.startsWith('❌ MQTT')) mqttStatus.textContent = 'MQTT: error';
   }
 
-  // Cliente MQTT robusto
+  // ================= MQTT =================
   const mqttClient = mqtt.connect(MQTT_URL, {
     keepalive: 30,
     clean: true,
@@ -93,21 +95,41 @@
     connectTimeout: 10_000
   });
 
-  mqttClient.on('connect', (conn) => {
+  mqttClient.on('connect', () => {
     log('✅ MQTT conectado');
     mqttClient.subscribe(TOPIC, { qos: 0 }, (err, granted) => {
       if (err) log('❌ Suscripción fallida: ' + err);
-      else log('➡ Suscrito: ' + JSON.stringify(granted));
+      else log('➡ Suscrito a: ' + JSON.stringify(granted));
+    });
+
+    // Suscribirse al topic de estado del ESP
+    mqttClient.subscribe(STATUS_TOPIC, { qos: 0 }, (err, granted) => {
+      if (err) log('❌ Suscripción status fallida: ' + err);
+      else log('➡ Suscrito a status: ' + JSON.stringify(granted));
     });
   });
 
   mqttClient.on('reconnect', () => log('🔁 MQTT reintentando'));
   mqttClient.on('close', () => log('🔒 MQTT cerrado'));
-  mqttClient.on('error', (e) => log('❌ MQTT error: ' + (e && e.message ? e.message : e)));
+  mqttClient.on('error', (e) => log('❌ MQTT error: ' + (e?.message || e)));
+
   mqttClient.on('message', (topic, payload) => {
     try {
       const s = payload.toString();
       log('🟢 MQTT recibido ' + topic + ' : ' + s);
+
+      if (topic === STATUS_TOPIC) {
+        const data = JSON.parse(s);
+        if (data.status === 'online') {
+          espStatus.textContent = 'ESP: conectado ✅';
+          espStatus.style.background = '#2ecc71';
+          log('✅ ESP conectado: ' + (data.device || 'desconocido'));
+        } else if (data.status === 'offline') {
+          espStatus.textContent = 'ESP: desconectado ⚠️';
+          espStatus.style.background = '#e74c3c';
+          log('⚠ ESP desconectado: ' + (data.device || 'desconocido'));
+        }
+      }
     } catch (e) {
       log('❌ Error al leer mensaje MQTT: ' + e);
     }
@@ -125,12 +147,12 @@
     }
   }
 
-  // Botones de prueba
+  // ================= BOTONES DE PRUEBA =================
   document.getElementById('btnPubPerro').addEventListener('click', () => publishCmd('perro'));
   document.getElementById('btnPubGato').addEventListener('click', () => publishCmd('gato'));
   document.getElementById('btnPubTest').addEventListener('click', () => publishCmd('test-' + Math.random().toString(36).slice(2,8)));
 
-  // Cámara
+  // ================= CÁMARA =================
   async function setupCamera(){
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
@@ -142,7 +164,7 @@
     canvas.height = video.videoHeight || 480;
   }
 
-  // Dibujo de cajas
+  // ================= DIBUJO =================
   function drawBoxes(preds){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     for (const p of preds){
@@ -160,13 +182,15 @@
     }
   }
 
+  // ================= LOOP PRINCIPAL =================
   (async () => {
     try {
       outEl.textContent = 'Solicitando cámara…';
       await setupCamera();
       outEl.textContent = `Cámara OK (${video.videoWidth}×${video.videoHeight})`;
       badge.textContent = 'Cargando modelo…';
-      // Forzar backend TF con fallback
+
+      // Inicializar backend TensorFlow
       if (window.tf) {
         try {
           await tf.setBackend('webgl');
@@ -227,7 +251,7 @@
     }
   })();
 
-  // Cerrar cliente cuando se sale
+  // ================= LIMPIEZA =================
   window.addEventListener('beforeunload', () => { try { mqttClient.end(true); } catch(e){} });
   </script>
 </body>
