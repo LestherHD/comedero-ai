@@ -36,9 +36,9 @@
     <div id="out">Preparando cámara…</div>
 
     <div class="controls">
-      <div id="mqttStatus" class="status small">MQTT: &#8230;</div>
-      <div id="tfStatus" class="status small">TF: &#8230;</div>
-      <div id="espStatus" class="status small">ESP: &#8230;</div>
+      <div id="mqttStatus" class="status small">MQTT: …</div>
+      <div id="tfStatus" class="status small">TF: …</div>
+      <div id="espStatus" class="status small">ESP: …</div>
       <button id="btnPubPerro">Publicar perro</button>
       <button id="btnPubGato">Publicar gato</button>
       <button id="btnPubTest">Publicar test</button>
@@ -50,20 +50,20 @@
     </details>
   </main>
 
-  <footer>Prueba: WSS broker test.mosquitto.org:8081 | Topics comedero/door y comedero/status</footer>
+  <footer>Broker: <b>broker.emqx.io</b> | Topics: <code>comedero/door</code> y <code>comedero/status</code></footer>
 
   <!-- Librerías -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2"></script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2" defer></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js" defer></script>
 
   <script>
   // ================= CONFIGURACIÓN =================
   const THRESHOLD = 0.55;
   const COOLDOWN_MS = 3000;
-  const MQTT_URL = 'wss://test.mosquitto.org:8081/mqtt';
-  const TOPIC = 'comedero/door';
-  const STATUS_TOPIC = 'comedero/status';
+  const MQTT_URL = "wss://broker.emqx.io:8084/mqtt";  // ✅ Broker estable
+  const TOPIC = "comedero/door";
+  const STATUS_TOPIC = "comedero/status";
 
   // ================= ELEMENTOS DOM =================
   const video = document.getElementById('video');
@@ -89,10 +89,10 @@
 
   // ================= MQTT =================
   const mqttClient = mqtt.connect(MQTT_URL, {
-    keepalive: 30,
+    keepalive: 45,
     clean: true,
-    reconnectPeriod: 2000,
-    connectTimeout: 10_000
+    reconnectPeriod: 4000,
+    connectTimeout: 8000
   });
 
   mqttClient.on('connect', () => {
@@ -102,7 +102,6 @@
       else log('➡ Suscrito a: ' + JSON.stringify(granted));
     });
 
-    // Suscribirse al topic de estado del ESP
     mqttClient.subscribe(STATUS_TOPIC, { qos: 0 }, (err, granted) => {
       if (err) log('❌ Suscripción status fallida: ' + err);
       else log('➡ Suscrito a status: ' + JSON.stringify(granted));
@@ -147,7 +146,7 @@
     }
   }
 
-  // ================= BOTONES DE PRUEBA =================
+  // ================= BOTONES =================
   document.getElementById('btnPubPerro').addEventListener('click', () => publishCmd('perro'));
   document.getElementById('btnPubGato').addEventListener('click', () => publishCmd('gato'));
   document.getElementById('btnPubTest').addEventListener('click', () => publishCmd('test-' + Math.random().toString(36).slice(2,8)));
@@ -155,16 +154,15 @@
   // ================= CÁMARA =================
   async function setupCamera(){
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 320 }, height: { ideal: 240 } },
       audio: false
     });
     video.srcObject = stream;
     await video.play();
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth || 320;
+    canvas.height = video.videoHeight || 240;
   }
 
-  // ================= DIBUJO =================
   function drawBoxes(preds){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     for (const p of preds){
@@ -182,7 +180,6 @@
     }
   }
 
-  // ================= LOOP PRINCIPAL =================
   (async () => {
     try {
       outEl.textContent = 'Solicitando cámara…';
@@ -190,60 +187,62 @@
       outEl.textContent = `Cámara OK (${video.videoWidth}×${video.videoHeight})`;
       badge.textContent = 'Cargando modelo…';
 
-      // Inicializar backend TensorFlow
       if (window.tf) {
         try {
-          await tf.setBackend('webgl');
+          await tf.setBackend('webgl').catch(() => tf.setBackend('wasm'));
           await tf.ready();
           tfStatus.textContent = 'TF: webgl';
           log('TF backend: webgl');
         } catch (e) {
           log('⚠ WebGL no disponible, forzando CPU: ' + e);
-          try { await tf.setBackend('cpu'); await tf.ready(); tfStatus.textContent = 'TF: cpu'; log('TF backend: cpu'); }
-          catch (e2) { log('❌ TF fallback fallo: ' + e2); tfStatus.textContent = 'TF: fallo'; }
+          await tf.setBackend('cpu');
+          await tf.ready();
+          tfStatus.textContent = 'TF: cpu';
         }
       }
 
       const model = await cocoSsd.load();
       badge.textContent = 'Listo ✅';
 
-      let lastCmd = 'none', cooldownUntil = 0;
+      let lastCmd = 'none', cooldownUntil = 0, frameCount = 0;
+      const FRAME_SKIP = 5; // Procesar solo 1 de cada 5 frames
 
       async function loop(){
-        const preds = await model.detect(video);
-        const cats  = preds.filter(p => p.class === 'cat' && p.score >= THRESHOLD);
-        const dogs  = preds.filter(p => p.class === 'dog' && p.score >= THRESHOLD);
+        frameCount++;
+        if (frameCount % FRAME_SKIP === 0) {
+          const preds = await model.detect(video);
+          const cats  = preds.filter(p => p.class === 'cat' && p.score >= THRESHOLD);
+          const dogs  = preds.filter(p => p.class === 'dog' && p.score >= THRESHOLD);
 
-        const topCat = cats.sort((a,b)=>b.score-a.score)[0];
-        const topDog = dogs.sort((a,b)=>b.score-a.score)[0];
+          const topCat = cats.sort((a,b)=>b.score-a.score)[0];
+          const topDog = dogs.sort((a,b)=>b.score-a.score)[0];
 
-        const list = [];
-        if (topCat) list.push({ label: '🐱 Gato', value: topCat.score });
-        if (topDog) list.push({ label: '🐶 Perro', value: topDog.score });
-        list.sort((a,b)=>b.value-a.value);
+          const list = [];
+          if (topCat) list.push({ label: '🐱 Gato', value: topCat.score });
+          if (topDog) list.push({ label: '🐶 Perro', value: topDog.score });
+          list.sort((a,b)=>b.value-a.value);
 
-        outEl.innerHTML = list.length ? list.map(r => `${r.label}: ${(r.value*100).toFixed(1)}%`).join(' | ') : 'Sin gato/perro detectados.';
-        drawBoxes([...(topCat?[topCat]:[]), ...(topDog?[topDog]:[])]);
+          outEl.innerHTML = list.length ? list.map(r => `${r.label}: ${(r.value*100).toFixed(1)}%`).join(' | ') : 'Sin gato/perro detectados.';
+          drawBoxes([...(topCat?[topCat]:[]), ...(topDog?[topDog]:[])]);
 
-        const now = Date.now();
-        if (now > cooldownUntil) {
-          if (topCat && topDog && lastCmd !== 'ambos') {
-            publishCmd('ambos');
-            lastCmd = 'ambos'; cooldownUntil = now + COOLDOWN_MS;
-          } else if (topDog && !topCat && lastCmd !== 'perro') {
-            publishCmd('perro');
-            lastCmd = 'perro'; cooldownUntil = now + COOLDOWN_MS;
-          } else if (topCat && !topDog && lastCmd !== 'gato') {
-            publishCmd('gato');
-            lastCmd = 'gato'; cooldownUntil = now + COOLDOWN_MS;
-          } else if (!topCat && !topDog && lastCmd !== 'none') {
-            lastCmd = 'none';
+          const now = Date.now();
+          if (now > cooldownUntil) {
+            if (topCat && topDog && lastCmd !== 'ambos') {
+              publishCmd('ambos');
+              lastCmd = 'ambos'; cooldownUntil = now + COOLDOWN_MS;
+            } else if (topDog && !topCat && lastCmd !== 'perro') {
+              publishCmd('perro');
+              lastCmd = 'perro'; cooldownUntil = now + COOLDOWN_MS;
+            } else if (topCat && !topDog && lastCmd !== 'gato') {
+              publishCmd('gato');
+              lastCmd = 'gato'; cooldownUntil = now + COOLDOWN_MS;
+            } else if (!topCat && !topDog && lastCmd !== 'none') {
+              lastCmd = 'none';
+            }
           }
         }
-
         requestAnimationFrame(loop);
       }
-
       loop();
     } catch (e) {
       outEl.textContent = 'Error: ' + (e.message || e);
@@ -251,7 +250,6 @@
     }
   })();
 
-  // ================= LIMPIEZA =================
   window.addEventListener('beforeunload', () => { try { mqttClient.end(true); } catch(e){} });
   </script>
 </body>
