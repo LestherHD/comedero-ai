@@ -1,94 +1,55 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Comedero AI (gato/perro)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Comedero AI - MQTT & Detección</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root { color-scheme: light dark; }
-    body {
-      font-family: system-ui, Arial, sans-serif;
-      margin: 0; padding: 0;
-      background: #626262;
-      display:flex; flex-direction:column; align-items:center;
-    }
-    header {
-      width:100%; padding:12px;
-      background:#919191; color:#fff;
-      font-size:1.1em; font-weight:600; text-align:center;
-      box-shadow:0 2px 6px rgba(0,0,0,.2);
-    }
-    main { max-width:480px; width:100%; padding:12px; }
-
-    #wrap {
-      position:relative;
-      border-radius:12px;
-      overflow:hidden;
-      box-shadow:0 4px 10px rgba(0,0,0,.2);
-      background:#292727;
-    }
-    video, canvas { width:100%; height:auto; display:block; }
-    .tag {
-      position:absolute; left:8px; top:8px;
-      background:rgba(126, 126, 126, 0.667); color:#fff;
-      padding:3px 8px; border-radius:8px;
-      font-size:13px; font-weight:600;
-    }
-
-    #out {
-      margin-top:8px;
-      font-size:18px; text-align:center;
-      padding:10px;
-      border-radius:10px;
-      background:#292727;
-      
-      box-shadow:0 2px 6px rgba(0,0,0,.1);
-    }
-
-    /* Pestaña de log */
-    details {
-      margin-top:10px;
-      width:100%;
-    }
-    summary {
-      cursor:pointer;
-      padding:8px 12px;
-      background:#292727;
-      border-radius:8px;
-      font-weight:600;
-      box-shadow:0 1px 4px rgba(0,0,0,.1);
-    }
-    #log {
-      margin-top:8px; padding:10px;
-      font-family: ui-monospace, monospace;
-      font-size:13px; white-space:pre-wrap;
-      background:#292727; border-radius:10px;
-      box-shadow:0 1px 4px rgba(0,0,0,.1);
-      max-height:120px; overflow-y:auto;
-    }
-
-    @media (max-width:600px) {
-      #out { font-size:16px; }
-    }
+    body { font-family: system-ui, Arial, sans-serif; margin:0; padding:0; background:#626262; display:flex; flex-direction:column; align-items:center; }
+    header { width:100%; padding:12px; background:#919191; color:#fff; font-size:1.05em; font-weight:600; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.2); }
+    main { max-width:760px; width:100%; padding:12px; }
+    #wrap { position:relative; border-radius:12px; overflow:hidden; box-shadow:0 4px 10px rgba(0,0,0,.2); background:#292727; }
+    video, canvas { width:100%; height:auto; display:block; background:#000; }
+    .tag { position:absolute; left:8px; top:8px; background:rgba(126,126,126,0.7); color:#fff; padding:6px 10px; border-radius:10px; font-size:13px; font-weight:700; }
+    #out { margin-top:12px; font-size:18px; text-align:center; padding:10px; border-radius:10px; background:#292727; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.1); }
+    details { margin-top:10px; width:100%; }
+    summary { cursor:pointer; padding:8px 12px; background:#292727; border-radius:8px; font-weight:700; color:#fff; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+    #log { margin-top:8px; padding:10px; font-family:ui-monospace,monospace; font-size:13px; white-space:pre-wrap; background:#222; color:#dfe; border-radius:8px; max-height:220px; overflow:auto; }
+    .controls { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    button { padding:8px 12px; border-radius:8px; border:0; cursor:pointer; background:#3fa9f5; color:#fff; font-weight:700; }
+    .status { display:inline-block; padding:6px 10px; border-radius:8px; background:#333; color:#fff; font-weight:700; }
+    .small { font-size:13px; padding:6px; border-radius:6px; }
+    footer { margin:18px 0 40px; color:#ddd; font-size:13px; }
   </style>
 </head>
 <body>
-  <header>🐾 Comedero AI</header>
+  <header>Comedero AI</header>
+
   <main>
     <div id="wrap">
       <video id="video" autoplay playsinline muted></video>
       <canvas id="overlay"></canvas>
-      <div id="badge" class="tag">Cargando…</div>
+      <div id="badge" class="tag">Iniciando...</div>
     </div>
 
     <div id="out">Preparando cámara…</div>
 
-    <!-- Pestaña desplegable -->
+    <div class="controls">
+      <div id="mqttStatus" class="status small">MQTT: &#8230;</div>
+      <div id="tfStatus" class="status small">TF: &#8230;</div>
+      <button id="btnPubPerro">Publicar perro</button>
+      <button id="btnPubGato">Publicar gato</button>
+      <button id="btnPubTest">Publicar test</button>
+    </div>
+
     <details>
-      <summary>📜 Ver log MQTT</summary>
-      <div id="log">Esperando conexión...</div>
+      <summary>📜 Ver log MQTT y debug</summary>
+      <div id="log">Esperando inicialización...</div>
     </details>
   </main>
+
+  <footer>Prueba: WSS broker test.mosquitto.org:8081 | Topic comedero/door</footer>
 
   <!-- Librerías -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
@@ -96,115 +57,178 @@
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
   <script>
-    let THRESHOLD = 0.55;
-    const COOLDOWN_MS = 3000;
-    const MQTT_URL   = 'wss://test.mosquitto.org:8081/mqtt';
-    const TOPIC      = 'comedero/door';
+  // Configuración
+  const THRESHOLD = 0.55;
+  const COOLDOWN_MS = 3000;
+  const MQTT_URL = 'wss://test.mosquitto.org:8081/mqtt';
+  const TOPIC = 'comedero/door';
 
-    const video   = document.getElementById('video');
-    const canvas  = document.getElementById('overlay');
-    const ctx     = canvas.getContext('2d');
-    const outEl   = document.getElementById('out');
-    const logEl   = document.getElementById('log');
-    const badge   = document.getElementById('badge');
+  // DOM
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d');
+  const outEl = document.getElementById('out');
+  const logEl = document.getElementById('log');
+  const badge = document.getElementById('badge');
+  const mqttStatus = document.getElementById('mqttStatus');
+  const tfStatus = document.getElementById('tfStatus');
 
-    const logs = [];
-    function log(s){ 
-      logs.unshift(s); 
-      while(logs.length>20) logs.pop(); 
-      logEl.textContent = logs.join('\n'); 
+  // Log interno con límite
+  const logs = [];
+  function log(s){
+    const ts = new Date().toLocaleTimeString();
+    logs.unshift(ts + ' | ' + s);
+    while(logs.length > 200) logs.pop();
+    logEl.textContent = logs.join('\n');
+    // actualizar estado corto
+    if (s.startsWith('✅ MQTT')) mqttStatus.textContent = 'MQTT: conectado';
+    if (s.startsWith('❌ MQTT')) mqttStatus.textContent = 'MQTT: error';
+  }
+
+  // Cliente MQTT robusto
+  const mqttClient = mqtt.connect(MQTT_URL, {
+    keepalive: 30,
+    clean: true,
+    reconnectPeriod: 2000,
+    connectTimeout: 10_000
+  });
+
+  mqttClient.on('connect', (conn) => {
+    log('✅ MQTT conectado');
+    mqttClient.subscribe(TOPIC, { qos: 0 }, (err, granted) => {
+      if (err) log('❌ Suscripción fallida: ' + err);
+      else log('➡ Suscrito: ' + JSON.stringify(granted));
+    });
+  });
+
+  mqttClient.on('reconnect', () => log('🔁 MQTT reintentando'));
+  mqttClient.on('close', () => log('🔒 MQTT cerrado'));
+  mqttClient.on('error', (e) => log('❌ MQTT error: ' + (e && e.message ? e.message : e)));
+  mqttClient.on('message', (topic, payload) => {
+    try {
+      const s = payload.toString();
+      log('🟢 MQTT recibido ' + topic + ' : ' + s);
+    } catch (e) {
+      log('❌ Error al leer mensaje MQTT: ' + e);
     }
+  });
 
-    const mqttClient = mqtt.connect(MQTT_URL, { keepalive: 30, clean: true });
-    mqttClient.on('connect', ()=> log('✅ MQTT conectado'));
-    mqttClient.on('error',   e  => log('❌ MQTT error: ' + e));
-    function publish(cmd){ mqttClient.publish(TOPIC, cmd); log('→ MQTT: '+cmd); }
-
-    async function setupCamera(){
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal:'environment' }, width:{ideal:640}, height:{ideal:480} },
-        audio: false
+  function publishCmd(cmd) {
+    if (mqttClient.connected) {
+      const payload = JSON.stringify({ cmd, t: Date.now() });
+      mqttClient.publish(TOPIC, payload, { qos:0, retain:false }, (err) => {
+        if (err) log('❌ Publish fallo: ' + err);
+        else log('→ MQTT enviado ' + payload);
       });
-      video.srcObject = stream;
-      await video.play();
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
+    } else {
+      log('❌ No conectado al broker, publish descartado: ' + cmd);
     }
+  }
 
-    function drawBoxes(preds){
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      for (const p of preds){
-        const [x,y,w,h] = p.bbox;
-        ctx.strokeStyle = p.class === 'cat' ? '#3fa9f5' : '#f55';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x,y,w,h);
-        const label = `${p.class} ${(p.score*100).toFixed(1)}%`;
-        ctx.font = '600 14px system-ui';
-        const tw = ctx.measureText(label).width + 10;
-        ctx.fillStyle = '#0009';
-        ctx.fillRect(x, y-22, tw, 20);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, x+5, y-7);
-      }
+  // Botones de prueba
+  document.getElementById('btnPubPerro').addEventListener('click', () => publishCmd('perro'));
+  document.getElementById('btnPubGato').addEventListener('click', () => publishCmd('gato'));
+  document.getElementById('btnPubTest').addEventListener('click', () => publishCmd('test-' + Math.random().toString(36).slice(2,8)));
+
+  // Cámara
+  async function setupCamera(){
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+  }
+
+  // Dibujo de cajas
+  function drawBoxes(preds){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for (const p of preds){
+      const [x,y,w,h] = p.bbox;
+      ctx.strokeStyle = p.class === 'cat' ? '#3fa9f5' : '#f55';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x,y,w,h);
+      const label = `${p.class} ${(p.score*100).toFixed(1)}%`;
+      ctx.font = '600 14px system-ui';
+      const tw = ctx.measureText(label).width + 10;
+      ctx.fillStyle = '#0009';
+      ctx.fillRect(x, y-22, tw, 20);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, x+5, y-7);
     }
+  }
 
-    (async () => {
-      try{
-        outEl.textContent = 'Solicitando cámara…';
-        await setupCamera();
-        outEl.textContent = `Cámara OK (${video.videoWidth}×${video.videoHeight})`;
-
-        badge.textContent = 'Cargando modelo…';
-        const model = await cocoSsd.load();
-        badge.textContent = 'Listo ✅';
-
-        let lastCmd = 'none', cooldownUntil = 0;
-
-        async function loop(){
-          const preds = await model.detect(video);
-          const cats  = preds.filter(p => p.class === 'cat' && p.score >= THRESHOLD);
-          const dogs  = preds.filter(p => p.class === 'dog' && p.score >= THRESHOLD);
-
-          const topCat = cats.sort((a,b)=>b.score-a.score)[0];
-          const topDog = dogs.sort((a,b)=>b.score-a.score)[0];
-
-          const list = [];
-          if (topCat) list.push({label:'🐱 Gato',  value: topCat.score});
-          if (topDog) list.push({label:'🐶 Perro', value: topDog.score});
-          list.sort((a,b)=>b.value-a.value);
-
-          outEl.innerHTML = list.length
-            ? list.map(r => `${r.label}: ${(r.value*100).toFixed(1)}%`).join(' | ')
-            : 'Sin gato/perro detectados.';
-
-          drawBoxes([...(topCat?[topCat]:[]), ...(topDog?[topDog]:[])]);
-
-          const now = Date.now();
-          if (now > cooldownUntil) {
-            if (topCat && topDog && lastCmd !== 'ambos'){
-              // Si detecta ambos, envía mensaje de ambos detectados
-              publish('Perro y gato detectado'); 
-              lastCmd='ambos'; 
-              cooldownUntil = now + COOLDOWN_MS;
-            } else if (topDog && !topCat && lastCmd !== 'perro'){
-              // Solo perro detectado
-              publish('perro'); 
-              lastCmd='perro'; 
-              cooldownUntil = now + COOLDOWN_MS;
-            } else if (topCat && !topDog && lastCmd !== 'gato'){
-              // Solo gato detectado
-              publish('gato');  
-              lastCmd='gato';  
-              cooldownUntil = now + COOLDOWN_MS;
-            }
-          }
-          requestAnimationFrame(loop);
+  (async () => {
+    try {
+      outEl.textContent = 'Solicitando cámara…';
+      await setupCamera();
+      outEl.textContent = `Cámara OK (${video.videoWidth}×${video.videoHeight})`;
+      badge.textContent = 'Cargando modelo…';
+      // Forzar backend TF con fallback
+      if (window.tf) {
+        try {
+          await tf.setBackend('webgl');
+          await tf.ready();
+          tfStatus.textContent = 'TF: webgl';
+          log('TF backend: webgl');
+        } catch (e) {
+          log('⚠ WebGL no disponible, forzando CPU: ' + e);
+          try { await tf.setBackend('cpu'); await tf.ready(); tfStatus.textContent = 'TF: cpu'; log('TF backend: cpu'); }
+          catch (e2) { log('❌ TF fallback fallo: ' + e2); tfStatus.textContent = 'TF: fallo'; }
         }
-        loop();
-      } catch(e){
-        outEl.textContent = 'Error: ' + (e.message || e);
       }
-    })();
+
+      const model = await cocoSsd.load();
+      badge.textContent = 'Listo ✅';
+
+      let lastCmd = 'none', cooldownUntil = 0;
+
+      async function loop(){
+        const preds = await model.detect(video);
+        const cats  = preds.filter(p => p.class === 'cat' && p.score >= THRESHOLD);
+        const dogs  = preds.filter(p => p.class === 'dog' && p.score >= THRESHOLD);
+
+        const topCat = cats.sort((a,b)=>b.score-a.score)[0];
+        const topDog = dogs.sort((a,b)=>b.score-a.score)[0];
+
+        const list = [];
+        if (topCat) list.push({ label: '🐱 Gato', value: topCat.score });
+        if (topDog) list.push({ label: '🐶 Perro', value: topDog.score });
+        list.sort((a,b)=>b.value-a.value);
+
+        outEl.innerHTML = list.length ? list.map(r => `${r.label}: ${(r.value*100).toFixed(1)}%`).join(' | ') : 'Sin gato/perro detectados.';
+        drawBoxes([...(topCat?[topCat]:[]), ...(topDog?[topDog]:[])]);
+
+        const now = Date.now();
+        if (now > cooldownUntil) {
+          if (topCat && topDog && lastCmd !== 'ambos') {
+            publishCmd('ambos');
+            lastCmd = 'ambos'; cooldownUntil = now + COOLDOWN_MS;
+          } else if (topDog && !topCat && lastCmd !== 'perro') {
+            publishCmd('perro');
+            lastCmd = 'perro'; cooldownUntil = now + COOLDOWN_MS;
+          } else if (topCat && !topDog && lastCmd !== 'gato') {
+            publishCmd('gato');
+            lastCmd = 'gato'; cooldownUntil = now + COOLDOWN_MS;
+          } else if (!topCat && !topDog && lastCmd !== 'none') {
+            lastCmd = 'none';
+          }
+        }
+
+        requestAnimationFrame(loop);
+      }
+
+      loop();
+    } catch (e) {
+      outEl.textContent = 'Error: ' + (e.message || e);
+      log('❌ Error inicio: ' + (e.message || e));
+    }
+  })();
+
+  // Cerrar cliente cuando se sale
+  window.addEventListener('beforeunload', () => { try { mqttClient.end(true); } catch(e){} });
   </script>
 </body>
 </html>
