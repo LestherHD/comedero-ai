@@ -181,21 +181,10 @@
 
           const now = Date.now();
           if (now > cooldownUntil) {
-            if (topCat && topDog && lastCmd !== 'ambos'){
-              // Si detecta ambos, envía mensaje de ambos detectados
-              publish('Perro y gato detectado'); 
-              lastCmd='ambos'; 
-              cooldownUntil = now + COOLDOWN_MS;
-            } else if (topDog && !topCat && lastCmd !== 'perro'){
-              // Solo perro detectado
-              publish('perro'); 
-              lastCmd='perro'; 
-              cooldownUntil = now + COOLDOWN_MS;
-            } else if (topCat && !topDog && lastCmd !== 'gato'){
-              // Solo gato detectado
-              publish('gato');  
-              lastCmd='gato';  
-              cooldownUntil = now + COOLDOWN_MS;
+            if (topDog && (!topCat || topDog.score >= topCat.score) && lastCmd !== 'perro'){
+              publish('perro'); lastCmd='perro'; cooldownUntil = now + COOLDOWN_MS;
+            } else if (topCat && (!topDog || topCat.score >= topDog.score) && lastCmd !== 'gato'){
+              publish('gato');  lastCmd='gato';  cooldownUntil = now + COOLDOWN_MS;
             }
           }
           requestAnimationFrame(loop);
